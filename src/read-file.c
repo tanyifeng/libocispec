@@ -19,6 +19,8 @@
 #include "read-file.h"
 
 #include <stdlib.h>
+#include <string.h>
+#include <limits.h>
 
 char *
 fread_file (FILE *stream, size_t *length)
@@ -53,12 +55,20 @@ fread_file (FILE *stream, size_t *length)
 
 char *read_file (const char *path, size_t *length)
 {
-  char *buf = NULL;
-  FILE *f = fopen (path, "r");
-  if (f == NULL)
-    return NULL;
+    char *buf = NULL;
+    char rpath[PATH_MAX + 1] = {0};
 
-  buf = fread_file (f, length);
-  fclose (f);
-  return buf;
+    if (!path)
+        return NULL;
+
+    if (strlen (path) > PATH_MAX || NULL == realpath (path, rpath))
+        return NULL;
+
+    FILE *f = fopen (rpath, "r");
+    if (f == NULL)
+        return NULL;
+
+    buf = fread_file (f, length);
+    fclose (f);
+    return buf;
 }

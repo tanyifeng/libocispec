@@ -155,7 +155,6 @@ def generate_C_parse(obj, c_file, prefix):
     c_file.write("    if (tree == NULL)\n")
     c_file.write("        return ret;\n")
     c_file.write("    ret = safe_malloc (sizeof (*ret));\n")
-    c_file.write("    memset (ret, 0, sizeof (*ret));\n")
 
     if obj.typ == 'mapStringString':
         pass
@@ -189,13 +188,13 @@ def generate_C_parse(obj, c_file, prefix):
                 typename = make_name_array(i.name, prefix)
                 c_file.write('    {\n')
                 c_file.write('        yajl_val tmp = get_val (tree, "%s", yajl_t_array);\n' % (i.origname))
-                c_file.write('        if (tmp != NULL) {\n')
+                c_file.write('        if (tmp && YAJL_GET_ARRAY (tmp)) {\n')
                 c_file.write('            size_t i;\n')
                 c_file.write('            ret->%s_len = YAJL_GET_ARRAY (tmp)->len;\n' % (i.fixname))
                 c_file.write('            ret->%s = safe_malloc ((YAJL_GET_ARRAY (tmp)->len + 1) * sizeof (*ret->%s));\n' % (i.fixname, i.fixname))
                 c_file.write('            for (i = 0; i < YAJL_GET_ARRAY (tmp)->len; i++) {\n')
-                c_file.write('                yajl_val tmpsub = YAJL_GET_ARRAY (tmp)->values[i];\n')
-                c_file.write('                ret->%s[i] = make_%s (tmpsub, ctx, err);\n' % (i.fixname, typename))
+                c_file.write('                yajl_val val = YAJL_GET_ARRAY (tmp)->values[i];\n')
+                c_file.write('                ret->%s[i] = make_%s (val, ctx, err);\n' % (i.fixname, typename))
                 c_file.write('                if (ret->%s[i] == NULL) {\n' % (i.fixname))
                 c_file.write("                    free_%s (ret);\n" % obj_typename)
                 c_file.write("                    return NULL;\n")
@@ -211,8 +210,7 @@ def generate_C_parse(obj, c_file, prefix):
                 c_file.write('            ret->%s_len = YAJL_GET_ARRAY (tmp)->len;\n' % (i.fixname))
                 c_file.write('            ret->%s = safe_malloc ((YAJL_GET_ARRAY (tmp)->len + 1) * sizeof (*ret->%s));\n' % (i.fixname, i.fixname))
                 c_file.write('            for (i = 0; i < YAJL_GET_ARRAY (tmp)->len; i++) {\n')
-                c_file.write('                yajl_val tmpsub = YAJL_GET_ARRAY (tmp)->values[i];\n')
-                read_value_generator(c_file, 4, 'tmpsub', "ret->%s[i]" % i.fixname, i.subtyp)
+                read_value_generator(c_file, 4, 'YAJL_GET_ARRAY (tmp)->values[i]', "ret->%s[i]" % i.fixname, i.subtyp)
                 c_file.write('            }\n')
                 c_file.write('        }\n')
                 c_file.write('    }\n')
@@ -245,10 +243,8 @@ def generate_C_parse(obj, c_file, prefix):
 
         for i in required_to_check:
             c_file.write('    if (ret->%s == NULL) {\n' % i.fixname)
-            c_file.write('        if (asprintf (err, "Required field \'%%s\' not present", "%s") < 0) {\n' % i.origname)
+            c_file.write('        if (asprintf (err, "Required field \'%%s\' not present", "%s") < 0)\n' % i.origname)
             c_file.write('            *err = strdup ("error allocating memory");\n')
-            c_file.write('            return NULL;\n')
-            c_file.write("        }\n")
             c_file.write("        free_%s (ret);\n" % obj_typename)
             c_file.write("        return NULL;\n")
             c_file.write('    }\n')
@@ -413,19 +409,26 @@ def generate_C_json(obj, c_file, prefix):
 
 def read_value_generator(c_file, level, src, dest, typ):
     if typ == 'mapStringString':
-        c_file.write('%s%s = read_map_string_string (%s);\n' % ('    ' * (level), dest, src))
+        c_file.write('%syajl_val val = %s;\n' % ('    ' * level, src))
+        c_file.write('%sif (val)\n' % ('    ' * level))
+        c_file.write('%s%s = read_map_string_string (val);\n' % ('    ' * (level + 1), dest))
     elif typ == 'string':
-        c_file.write('%sif (%s)\n' % ('    ' * level, src))
-        c_file.write('%s%s = strdup (YAJL_GET_STRING (%s) ? : "");\n' % ('    ' * (level + 1), dest, src))
+        c_file.write('%syajl_val val = %s;\n' % ('    ' * (level), src))
+        c_file.write('%sif (val) {\n' % ('    ' * (level)))
+        c_file.write('%schar *str = YAJL_GET_STRING (val);\n' % ('    ' * (level + 1)))
+        c_file.write('%s%s = strdup (str ? str : "");\n' % ('    ' * (level + 1), dest))
+        c_file.write('%s}\n' % ('    ' * level))
     elif is_numeric_type(typ):
-        c_file.write('%sif (%s)\n' % ('    ' * level, src))
+        c_file.write('%syajl_val val = %s;\n' % ('    ' * (level), src))
+        c_file.write('%sif (val)\n' % ('    ' * (level)))
         if typ.startswith("uint"):
-            c_file.write('%s%s = strtoull (YAJL_GET_NUMBER (%s), NULL, 10);\n' % ('    ' * (level + 1), dest, src))
+            c_file.write('%s%s = strtoull (YAJL_GET_NUMBER (val), NULL, 10);\n' % ('    ' * (level + 1), dest))
         else:
-            c_file.write('%s%s = strtoll (YAJL_GET_NUMBER (%s), NULL, 10);\n' % ('    ' * (level + 1), dest, src))
+            c_file.write('%s%s = strtoll (YAJL_GET_NUMBER (val), NULL, 10);\n' % ('    ' * (level + 1), dest))
     elif typ == 'boolean':
-        c_file.write('%sif (%s)\n' % ('    ' * level, src))
-        c_file.write('%s%s = YAJL_IS_TRUE (%s);\n' % ('    ' * (level + 1), dest, src))
+        c_file.write('%syajl_val val = %s;\n' % ('    ' * (level), src))
+        c_file.write('%sif (val)\n' % ('    ' * (level)))
+        c_file.write('%s%s = YAJL_IS_TRUE (val);\n' % ('    ' * (level + 1), dest))
 
 def json_value_generator(c_file, level, src, dst, typ):
     if typ == 'mapStringString':
@@ -1087,7 +1090,7 @@ void *safe_malloc (size_t size) {
 
 string_cells *read_map_string_string (yajl_val src) {
     string_cells *ret = NULL;
-    if (src != NULL) {
+    if (src && YAJL_GET_OBJECT (src)) {
         size_t i;
         ret = safe_malloc (sizeof (string_cells));
         ret->len = YAJL_GET_OBJECT (src)->len;
@@ -1096,10 +1099,12 @@ string_cells *read_map_string_string (yajl_val src) {
         for (i = 0; i < YAJL_GET_OBJECT (src)->len; i++) {
             yajl_val srcsub = YAJL_GET_OBJECT (src)->values[i];
             ret->keys[i] = strdup (YAJL_GET_OBJECT (src)->keys[i] ? : "");
-            if (srcsub)
-                ret->values[i] = strdup (YAJL_GET_STRING (srcsub) ? : "");
-            else
+            if (srcsub) {
+                char *str = YAJL_GET_STRING (srcsub);
+                ret->values[i] = strdup (str ? str : "");
+            } else {
                 ret->values[i] = NULL;
+            }
         }
     }
     return ret;
